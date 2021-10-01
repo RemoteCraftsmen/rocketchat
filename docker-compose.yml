@@ -1,0 +1,66 @@
+version: '3'
+
+services:
+    mongo:
+        image: mongo:4.0
+        container_name: ${COMPOSE_PROJECT_NAME}.mongo.docker
+        restart: unless-stopped
+        environment:
+            MONGO_INITDB_DATABASE: ${MONGO_NAME}
+            MONGO_INITDB_ROOT_USERNAME: ${MONGO_USERNAME}
+            MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+        command: mongod --smallfiles --oplogSize 128 --replSet rs0 --storageEngine=mmapv1
+        volumes:
+            - mongo.data:/data/db
+        networks:
+            - global
+
+    mongo-init-replica:
+        image: mongo:4.0
+        container_name: ${COMPOSE_PROJECT_NAME}.mongo-init-replica.docker
+        command: >
+            bash -c
+                "for i in `seq 1 30`; do
+                    mongo mongo/${MONGO_NAME} -u ${MONGO_USERNAME} -p ${MONGO_PASSWORD} --authenticationDatabase admin --eval \"
+                        rs.initiate({
+                        _id: 'rs0',
+                        members: [ { _id: 0, host: 'localhost:27017' } ]})\" &&
+                    s=$$? && break || s=$$?;
+                    echo \"Tried $$i times. Waiting 5 secs...\";
+                    sleep 5;
+                done; (exit $$s)"
+        depends_on:
+            - mongo
+        networks:
+            - global
+
+    rocketchat:
+        image: rocket.chat:3
+        container_name: ${COMPOSE_PROJECT_NAME}.rocketchat.docker
+        restart: unless-stopped
+        environment:
+            MONGO_OPLOG_URL: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@mongo:27017/local?authSource=admin&replSet=rs01
+            MONGO_URL: mongodb://${MONGO_USERNAME}:${MONGO_PASSWORD}@mongo:27017/${MONGO_NAME}?authSource=admin&replSet=rs01
+            ROOT_URL: https://here-is-your-domain.com
+        command: >
+            bash -c
+                "for i in `seq 1 30`; do
+                    node main.js &&
+                    s=$$? && break || s=$$?;
+                    echo \"Tried $$i times. Waiting 5 secs...\";
+                    sleep 5;
+                done; (exit $$s)"
+        volumes:
+            - ratchet.data:/app/uploads
+        ports:
+            - 127.0.0.1:${ROCKETCHAT_PORT}:3000
+        networks:
+            - global
+
+volumes:
+    mongo.data:
+    ratchet.data:
+
+networks:
+    global:
+        external: true
